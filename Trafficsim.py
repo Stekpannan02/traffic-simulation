@@ -1,92 +1,114 @@
+
+
+import numpy as np
 import matplotlib.pyplot as plt
-import math
+from matplotlib.animation import FuncAnimation
 import random
 
-# ---- DEFINE NODES ----
-nodes = {
-    "A": (0, 0),
-    "B": (1, 0.5),
-    "C": (2, 4),
-    "D": (3, 1),
-}
+# ------------------------------
+# 1. Grid definition
+# ------------------------------
 
-# ---- DEFINE EDGES ----
-edges = [
-    ("A", "B"),
-    ("B", "C"),
-    ("B", "D"),
-    ("C", "D")
-]
+GRID_W = 20
+GRID_H = 20
 
-# ---- FUNCTION TO CALCULATE DISTANCE ----
-def distance(n1, n2):
-    x1, y1 = nodes[n1]
-    x2, y2 = nodes[n2]
-    return math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+# 0 = ingen väg
+# 1 = väg
+# (vi gör ett enkelt rutnät: var fjärde rad och kolumn är väg)
+grid = np.zeros((GRID_H, GRID_W), dtype=int)
+for i in range(0, GRID_H, 4):
+    grid[i, :] = 1
+for j in range(0, GRID_W, 4):
+    grid[:, j] = 1
 
-# ---- CREATE GRAPH WITH DISTANCES ----
-graph = {}
-for n1, n2 in edges:
-    d = distance(n1, n2)
-    graph.setdefault(n1, []).append((n2, d))
-    graph.setdefault(n2, []).append((n1, d))  # tvåvägs
+# ------------------------------
+# 2. Bilklass
+# ------------------------------
 
-# ---- STOCHASTIC AGENT PATH FUNCTION ----
-def stochastic_agent_path(start, goal, graph, shortest_prob=0.9):
-    current = start
-    path = [current]
-    visited = set()
-    
-    while current != goal:
-        visited.add(current)
-        neighbors = [(n, d) for n, d in graph[current] if n not in visited]
-        if not neighbors:  # Om vi fastnar
+class Car:
+    def __init__(self, pos, direction):
+        self.pos = pos  # (row, col)
+        self.direction = direction  # (dr, dc)
+
+    def next_pos(self):
+        r, c = self.pos
+        dr, dc = self.direction
+        return (r + dr, c + dc)
+
+# ------------------------------
+# 3. Spawn bilar
+# ------------------------------
+
+cars = []
+
+def spawn_car():
+    # välj slumpmässig vägcell
+    while True:
+        r = random.randrange(GRID_H)
+        c = random.randrange(GRID_W)
+        if grid[r, c] == 1:
             break
-        
-        # Sortera grannar efter avstånd till målet
-        neighbors.sort(key=lambda x: distance(x[0], goal))
-        if random.random() < shortest_prob:
-            # 90% chans: välj närmaste
-            next_node = neighbors[0][0]
-        else:
-            # 10% chans: välj slumpmässigt bland övriga
-            if len(neighbors) > 1:
-                next_node = random.choice(neighbors[1:])[0]
-            else:
-                next_node = neighbors[0][0]
-        
-        path.append(next_node)
-        current = next_node
-        
-    return path
 
-# Generera agentens väg
-agent_path = stochastic_agent_path("A", "D", graph)
-print("Agentens väg:", agent_path)
+    # välj en enkel riktning ±1 cell i en dimension
+    direction = random.choice([(1,0), (-1,0), (0,1), (0,-1)])
+    return Car((r, c), direction)
 
-# ---- PLOT ----
-plt.figure(figsize=(6, 6))
+# spawn initiala bilar
+for _ in range(20):
+    cars.append(spawn_car())
 
-# Plot nodes
-for name, (x, y) in nodes.items():
-    plt.scatter(x, y)
-    plt.text(x + 0.05, y + 0.05, name)
+# ------------------------------
+# 4. Simulationslogik
+# ------------------------------
 
-# Plot edges
-for n1, n2 in edges:
-    x1, y1 = nodes[n1]
-    x2, y2 = nodes[n2]
-    plt.plot([x1, x2], [y1, y2], color="gray")
+def update():
+    occupied = {car.pos for car in cars}
 
-# Plot agent path
-for i in range(len(agent_path) - 1):
-    x1, y1 = nodes[agent_path[i]]
-    x2, y2 = nodes[agent_path[i + 1]]
-    plt.plot([x1, x2], [y1, y2], color="red", linewidth=2, label="Agent path" if i==0 else "")
+    # försök flytta bilar
+    for car in cars:
+        nr, nc = car.next_pos()
 
-plt.grid(True)
-plt.xlabel("X")
-plt.ylabel("Y")
-plt.title("Node Graph with Stochastic Agent Path")
-plt.legend()
+        # om bilen går utanför grid → byt riktning
+        if not (0 <= nr < GRID_H and 0 <= nc < GRID_W):
+            car.direction = (-car.direction[0], -car.direction[1])
+            continue
+
+        # om nästa cell inte är en väg → byt riktning
+        if grid[nr, nc] == 0:
+            car.direction = (-car.direction[0], -car.direction[1])
+            continue
+
+        # om cellen framför är blockerad → stå still
+        if (nr, nc) in occupied:
+            continue
+
+        # annars flytta bilen
+        occupied.remove(car.pos)
+        car.pos = (nr, nc)
+        occupied.add(car.pos)
+
+# ------------------------------
+# 5. Visualisering
+# ------------------------------
+
+fig, ax = plt.subplots(figsize=(6,6))
+
+def animate(frame):
+    update()
+
+    ax.clear()
+    ax.imshow(grid, cmap="gray_r")
+
+    xs = [car.pos[1] for car in cars]
+    ys = [car.pos[0] for car in cars]
+
+    ax.scatter(xs, ys, c="red", s=30)
+    ax.set_title("Cell-based Traffic Grid")
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    return []
+
+anim = FuncAnimation(fig, animate, frames=200, interval=200)
 plt.show()
+
