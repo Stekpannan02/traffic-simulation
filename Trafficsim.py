@@ -127,7 +127,7 @@ import random
 GRID_W = 20
 GRID_H = 20
 grid = np.zeros((GRID_H, GRID_W), dtype=int)
-
+congestion_history = []
 # skapa vägar (enkelt korsmönster)
 for i in range(0, GRID_H, 4):
     grid[i, :] = 1
@@ -242,64 +242,54 @@ def compute_cost_map(cars):
 def update():
     cost_map = compute_cost_map(cars)
 
+    ### NY ###
+    old_positions = [car.pos for car in cars]
+
     # STEG 1 – REGISTRERA ALLA UPPTAGNA POSITIONER
     old_occupied = {car.pos for car in cars}
     new_occupied = set()
 
-    # -----------------------------
-    # Ändring 1: lista för bilar som ska tas bort
-    # -----------------------------
     cars_to_remove = []
-
+    
     for car in cars:
-        # Kolla om bilen har nått sitt mål
         if car.pos == car.goal:
-            # -----------------------------
-            # Ändring 2: markera bilen för borttagning
-            # -----------------------------
+            if car.pos in old_occupied:
+                old_occupied.remove(car.pos)
             cars_to_remove.append(car)
             continue
 
-        # STEG 2 – OMPROGRAMMERA RUTTER IBLAND
         car.recalc_delay -= 1
         if car.recalc_delay <= 0:
             car.recalc_path(cost_map)
             car.recalc_delay = random.randint(10, 25)
 
-    # STEG 3 – FÖRSÖK FLYTTA ALLA BILAR
     for car in cars:
-        # hoppa över bilar som ska tas bort
-        if car in cars_to_remove:
-            continue
-
         nxt = car.next_pos()
 
-        # står still eller framme
         if nxt == car.pos:
             new_occupied.add(car.pos)
             continue
 
-        # BLOCKERAD?
         if nxt in old_occupied or nxt in new_occupied:
-            # bilen kan inte flytta, stannar
             new_occupied.add(car.pos)
             continue
 
-        # FLYTTA
         car.pos = nxt
         car.index += 1
         new_occupied.add(car.pos)
 
-    # -----------------------------
-    # Ändring 3: ta bort bilar som nått mål
-    # -----------------------------
-    for car in cars_to_remove:
-        if car in cars:
-            cars.remove(car)
-
-    # STEG 4 – UPPDATERA OCCUPIED
     old_occupied.clear()
     old_occupied.update(new_occupied)
+
+    ### NY ###
+    stopped = sum(
+    1 for car, old_pos in zip(cars, old_positions)
+    if car.pos == old_pos
+)
+    
+    for car in cars_to_remove:
+        cars.remove(car)
+    congestion_history.append(stopped)
 
 # ----------------------------------
 # 6. Visualization
@@ -331,4 +321,12 @@ def animate(_):
     return []
 
 anim = FuncAnimation(fig, animate, frames=1000, interval=120)
+plt.show()
+
+
+plt.figure()
+plt.plot(congestion_history)
+plt.title("Congestion Index Over Time")
+plt.xlabel("Timestep")
+plt.ylabel("Cars Standing Still")
 plt.show()
