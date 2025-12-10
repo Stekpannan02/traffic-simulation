@@ -368,6 +368,51 @@ class Car:
         return self.pos
 
 # ----------------------------------
+# 3b. TrafficLight (PLACERAD PÅ TOPPNIVÅ, ej inuti Car!)
+# ----------------------------------
+class TrafficLight:
+    def __init__(self, position, ns_green=40, ew_green=40):
+        """
+        position: (r,c)
+        ns_green: antal steg där N-S är grönt (och E-W rött)
+        ew_green: antal steg där E-W är grönt
+        """
+        self.position = position
+        self.ns_green = ns_green
+        self.ew_green = ew_green
+        self.timer = 0
+        # starta med N-S grönt
+        self.state = "NS_GREEN"  # eller "EW_GREEN"
+    
+    def tick(self):
+        """Stega timern ett steg och byt fas vid behov."""
+        self.timer += 1
+        if self.state == "NS_GREEN":
+            if self.timer >= self.ns_green:
+                self.state = "EW_GREEN"
+                self.timer = 0
+        else:
+            if self.timer >= self.ew_green:
+                self.state = "NS_GREEN"
+                self.timer = 0
+
+    def allows(self, from_pos, to_pos):
+        """
+        Return True om rörelsen from_pos->to_pos är tillåten nu.
+        Rörelse i N-S riktning (dr != 0) kräver NS_GREEN,
+        rörelse i E-W riktning (dc != 0) kräver EW_GREEN.
+        """
+        dr = to_pos[0] - from_pos[0]
+        dc = to_pos[1] - from_pos[1]
+        if dr != 0:
+            # vertikal rörelse (north-south)
+            return self.state == "NS_GREEN"
+        if dc != 0:
+            # horisontell rörelse (east-west)
+            return self.state == "EW_GREEN"
+        return True
+
+# ----------------------------------
 # 4. Spawning med dagskurva
 # ----------------------------------
 def traffic_intensity(t, T_max):
@@ -416,7 +461,27 @@ def compute_cost_map(cars):
     return cost
 
 # ----------------------------------
-# 7. UPDATE med högertrafik
+# 6b. Identifiera korsningar och skapa trafikljus
+# ----------------------------------
+intersections = []
+for r in range(1, GRID_H-1):
+    for c in range(1, GRID_W-1):
+        if road_mask[r, c] == 1:
+            # enkel korsningskriterium: vägar i alla fyra riktningar
+            if road_mask[r-1, c] == 1 and road_mask[r+1, c] == 1 and road_mask[r, c-1] == 1 and road_mask[r, c+1] == 1:
+                intersections.append((r, c))
+
+# skapa TrafficLight-objekt för varje korsning
+traffic_lights = {}
+for inter in intersections:
+    traffic_lights[inter] = TrafficLight(inter, ns_green=30, ew_green=30)
+
+# skapa konstnärsmarkörer (matplotlib artists) för att rita ljusen senare
+# Detta görs efter vi skapar fig/ax (men vi skapar här en tom dict som fylls senare)
+light_artists = {}
+
+# ----------------------------------
+# 7. UPDATE med trafikljuskontroll
 # ----------------------------------
 def update():
     global congestion_history
@@ -440,7 +505,7 @@ def update():
             car.recalc_path(cost_map)
             car.recalc_delay = random.randint(10,25)
 
-    # flytta bilar (högertrafik på raka segment, korsning = båda körfält)
+    # flytta bilar (respektera trafikljus i korsningar)
     for car in cars:
         if car in cars_to_remove: continue
         nxt = car.next_pos()
@@ -448,15 +513,26 @@ def update():
         nr,nc = nxt
         # säkerhet: bara på vägar
         if road_mask[nr,nc]==0: continue
+
+        # Om nästa cell är en korsning med trafikljus -> kolla om rörelsen är tillåten
+        if nxt in traffic_lights:
+            light = traffic_lights[nxt]
+            if not light.allows(car.pos, nxt):
+                # rött för den här rörelseriktningen -> stanna
+                continue
+
         # flytta bilen
-        grid[car.pos[0], car.pos[1]].remove(car)
+        if car in grid[car.pos[0], car.pos[1]]:
+            grid[car.pos[0], car.pos[1]].remove(car)
         grid[nr,nc].append(car)
         car.pos = nxt
         car.index += 1
+
         # check om mål nått
         if car.pos == car.goal:
             cars_to_remove.append(car)
-            grid[nr,nc].remove(car)
+            if car in grid[car.pos[0], car.pos[1]]:
+                grid[car.pos[0], car.pos[1]].remove(car)
 
     # ta bort bilar
     for car in cars_to_remove:
@@ -472,16 +548,41 @@ def update():
 fig, ax = plt.subplots(figsize=(8,8))
 ax.imshow(road_mask, cmap="gray_r")
 ax.set_xticks([]); ax.set_yticks([])
+
+# skapa scatter-markörer för bilar
 dots = []
 for car in cars:
     dot, = ax.plot([car.pos[1]], [car.pos[0]], 'o', color='red', markersize=5)
     dots.append(dot)
 
+# skapa artist-objekt för trafikljusen (en cirkel per korsning)
+for pos, light in traffic_lights.items():
+    # rita initialt, uppdaterar färg varje frame
+    la, = ax.plot(pos[1], pos[0], 'o', markersize=9,
+                  color='green' if light.state == "NS_GREEN" else 'red', alpha=0.8)
+    light_artists[pos] = la
+
+
+
 def animate(step):
     global timestep, dots
+    # 1) spawn nya bilar
     spawn_cars(timestep)
+
+    # 2) ticka trafikljusen här (vi kallar tick så det inte konflikter med Car.update)
+    for light in traffic_lights.values():
+        light.tick()
+
+    # 3) uppdatera trafiken
     update()
-    # uppdatera dots
+
+    # 4) uppdatera ljusfärger (artists)
+    for pos, light in traffic_lights.items():
+        col = 'green' if light.state == "NS_GREEN" else 'red'
+        # uppdatera färg på artist
+        light_artists[pos].set_color(col)
+
+    # 5) sync bil-markörer (dots)
     while len(dots) > len(cars):
         dot = dots.pop()
         dot.remove()
@@ -491,17 +592,22 @@ def animate(step):
         dots.append(dot)
     for dot, car in zip(dots, cars):
         dot.set_data([car.pos[1]], [car.pos[0]])
-    # klocka
+
+    # 6) uppdatera titel med tid
     minutes = int((timestep/SIM_STEPS)*(T_DAY-1))
     hours = minutes//60
     mins = minutes%60
     ax.set_title(f"Time {hours:02d}:{mins:02d} | Cars: {len(cars)}")
+
     timestep +=1
-    return dots
+    return list(dots) + list(light_artists.values())
 
 anim = FuncAnimation(fig, animate, frames=SIM_STEPS, interval=80, blit=False)
 plt.show()
 
+# ----------------------------------
+# 9. Plotta congestion
+# ----------------------------------
 plt.figure()
 plt.plot(congestion_history)
 plt.title("Congestion Index Over Time")
