@@ -287,9 +287,15 @@ road_mask = np.zeros((GRID_H, GRID_W), dtype=int)
 for i in range(0, GRID_H, 4):
     if i % 8 == 0:  # varannan rad vägen borta för färre korsningar
         road_mask[i, :] = 1
+# se till att sista raden också är väg
+road_mask[GRID_H-1, :] = 1
+
 for j in range(0, GRID_W, 4):
     if j % 8 == 0:
         road_mask[:, j] = 1
+# se till att sista kolumnen också är väg
+road_mask[:, GRID_W-1] = 1
+
 
 # grid: varje cell innehåller lista av bilar
 grid = np.empty((GRID_H, GRID_W), dtype=object)
@@ -345,6 +351,13 @@ def dijkstra_path(start, goal, cost_map):
     path.reverse()
     return path
 
+
+def compute_cost_map(cars):
+    cost = np.ones((GRID_H, GRID_W), dtype=float)
+    for car in cars:
+        r,c = car.pos
+        cost[r,c] += 1
+    return cost
 # ----------------------------------
 # 3. Car class med path
 # ----------------------------------
@@ -356,13 +369,16 @@ class Car:
         self.path = []
         self.index = 0
         self.recalc_delay = random.randint(10,25)
+        # ------------------------------------------------
+        # Lägg till direkt path-beräkning vid spawn
+        self.recalc_path(compute_cost_map(cars))
+        # ------------------------------------------------
 
     def recalc_path(self, cost_map):
         self.path = dijkstra_path(self.pos, self.goal, cost_map)
         self.index = 0
 
     def next_pos(self):
-        # Returnera nästa cell längs path
         if self.index + 1 < len(self.path):
             return self.path[self.index + 1]
         return self.pos
@@ -417,7 +433,7 @@ class TrafficLight:
 # ----------------------------------
 def traffic_intensity(t, T_max):
     x = t / T_max
-    morning  = np.exp(-((x - 0.33)**2) / 0.002)
+    morning  = np.exp(-((x - 0.33)**2) / 0.003)
     evening  = np.exp(-((x - 0.70)**2) / 0.003)
     base = 0.05
     return base + morning + evening
@@ -453,12 +469,7 @@ for _ in range(N_INIT):
 # ----------------------------------
 # 6. Kostkarta (congestion)
 # ----------------------------------
-def compute_cost_map(cars):
-    cost = np.ones((GRID_H, GRID_W), dtype=float)
-    for car in cars:
-        r,c = car.pos
-        cost[r,c] += 1
-    return cost
+
 
 # ----------------------------------
 # 6b. Identifiera korsningar och skapa trafikljus
@@ -485,62 +496,54 @@ light_artists = {}
 # ----------------------------------
 def update():
     global congestion_history
+
+    # 1. Uppdatera kostkarta
     cost_map = compute_cost_map(cars)
     old_positions = [car.pos for car in cars]
     cars_to_remove = []
 
-    # kontrollera framme
     for car in cars:
         if car.pos == car.goal:
             r,c = car.pos
             if car in grid[r,c]:
                 grid[r,c].remove(car)
             cars_to_remove.append(car)
+            continue
 
-    # omplanering
-    for car in cars:
-        if car in cars_to_remove: continue
-        car.recalc_delay -= 1
-        if car.recalc_delay <=0:
+        # ------------------------------------------------
+        # Om bilen inte har någon path, räkna om den
+        if not car.path or car.pos in intersections:
             car.recalc_path(cost_map)
-            car.recalc_delay = random.randint(10,25)
+        # ------------------------------------------------
 
-    # flytta bilar (respektera trafikljus i korsningar)
-    for car in cars:
-        if car in cars_to_remove: continue
         nxt = car.next_pos()
-        if nxt == car.pos: continue
-        nr,nc = nxt
+        nr, nc = nxt
+
         # säkerhet: bara på vägar
-        if road_mask[nr,nc]==0: continue
+        if road_mask[nr, nc] == 0:
+            continue
 
-        # Om nästa cell är en korsning med trafikljus -> kolla om rörelsen är tillåten
-        if nxt in traffic_lights:
-            light = traffic_lights[nxt]
-            if not light.allows(car.pos, nxt):
-                # rött för den här rörelseriktningen -> stanna
-                continue
-
-        # flytta bilen
-        if car in grid[car.pos[0], car.pos[1]]:
+        # flytta bara om cellen är tom → köer byggs
+        if not grid[nr, nc]:
             grid[car.pos[0], car.pos[1]].remove(car)
-        grid[nr,nc].append(car)
-        car.pos = nxt
-        car.index += 1
+            grid[nr, nc].append(car)
+            car.pos = nxt
+            car.index += 1
 
-        # check om mål nått
+        # kontrollera mål igen efter flytt
         if car.pos == car.goal:
             cars_to_remove.append(car)
             if car in grid[car.pos[0], car.pos[1]]:
                 grid[car.pos[0], car.pos[1]].remove(car)
 
-    # ta bort bilar
+    # ta bort bilar som nått mål
     for car in cars_to_remove:
         if car in cars: cars.remove(car)
 
-    # congestion
+    # congestion: antal bilar som står still
     stopped = sum(1 for car, old in zip(cars, old_positions) if car.pos == old)
     congestion_history.append(stopped)
+
 
 # ----------------------------------
 # 8. Visualization
