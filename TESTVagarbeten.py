@@ -3,7 +3,8 @@ import random
 import matplotlib.pyplot as plt
 from heapq import heappush, heappop
 from matplotlib.animation import FuncAnimation
-
+#import matplotlib      #Om det slutar fungera, avkommentera denna rad
+#matplotlib.use('TkAgg') #Använd denna rad om det slutar fungera
 # ----------------------------------
 # 0. Settings / global
 # ----------------------------------
@@ -13,7 +14,6 @@ SIM_STEPS = 400
 roadworks = {}  # key=(r,c), value=timer kvar
 ROADWORK_PROB = 0.0001
 ROADWORK_DURATION = 50  # antal steg vägarbetet finns kvar
-
 
 congestion_history = []
 
@@ -35,8 +35,6 @@ road_mask[:, 0] = 1
 road_mask[:, GRID_W-1] = 1
 
 # Ta bort några mellanvägar slumpmässigt (ej kantvägar)
-
-            
 for i in range(1, 8):
     road_mask[i,8] = 0
 for i in range(9,32):
@@ -44,11 +42,10 @@ for i in range(9,32):
 for j in range(25,39):
     road_mask[16,j] = 0
     road_mask[24,j] = 0
-
 for j in range(9,16):
     road_mask[24,j] = 0
-    
-#road_mask
+
+# Lanes
 lanes = np.empty((GRID_H, GRID_W), dtype=object)
 for r in range(GRID_H):
     for c in range(GRID_W):
@@ -76,19 +73,19 @@ def dijkstra_path(start, goal, cost_map):
             break
 
         r, c = cur
-        for dr,dc in [(1,0),(-1,0),(0,1),(0,-1)]:
-            nr,nc = r+dr, c+dc
+        for dr, dc in [(1,0),(-1,0),(0,1),(0,-1)]:
+            nr, nc = r+dr, c+dc
             if not (0 <= nr < H and 0 <= nc < W): 
                 continue
-            if road_mask[nr,nc] != 1:
+            # Kolla väg och vägarbete
+            if road_mask[nr,nc] != 1 or (nr,nc) in roadworks:
                 continue
-            
             nxt = (nr,nc)
             new_cost = cur_cost + cost_map[nr,nc]
             if nxt not in dist or new_cost < dist[nxt]:
                 dist[nxt] = new_cost
                 visited[nxt] = cur
-                heappush(pq,(new_cost,nxt))
+                heappush(pq, (new_cost,nxt))
 
     path = []
     node = goal
@@ -111,7 +108,7 @@ class Car:
         self.last_dir = None
         self.stuck_counter = 0
 
-        self.recalc_path(np.ones((GRID_H,GRID_W)))
+        self.recalc_path(np.ones((GRID_H, GRID_W)))
 
     def recalc_path(self, cost_map):
         self.path = dijkstra_path(self.pos, self.goal, cost_map)
@@ -147,8 +144,6 @@ for r in range(1, GRID_H-1):
            and road_mask[r,c-1] == 1 and road_mask[r,c+1] == 1:
             intersections.append((r,c))
 
-
-
 # ----------------------------------
 # Traffic Light Class
 # ----------------------------------
@@ -180,21 +175,19 @@ class TrafficLight:
             return self.state == "EW_GREEN"
         return True
 
-
-
 traffic_lights = [
     TrafficLight((16,16), ns_green=30, ew_green=30),
     TrafficLight((16,8), ns_green=50, ew_green=20),
 ]
-
 traffic_light_map = {tl.position: tl for tl in traffic_lights}
+
 # ----------------------------------
 # Cost map
 # ----------------------------------
 def compute_cost_map(cars):
     cost = np.ones((GRID_H, GRID_W), dtype=float)
     for car in cars:
-        r,c = car.pos
+        r, c = car.pos
         cnt = sum(len(v) for v in lanes[r,c].values())
         cost[r,c] += cnt*2
     return cost
@@ -202,9 +195,30 @@ def compute_cost_map(cars):
 # ----------------------------------
 # Spawning
 # ----------------------------------
+
+
+T_DAY = 24 * 60  # simulera hela dagen i minuter
+timestep = 0
+def traffic_intensity(t, T_max):
+    """
+    Returnerar sannolikheten att spawnar en bil vid tid t (0..T_max)
+    med peak på morgon (ca 8:00) och kväll (ca 17:00).
+    """
+    x = t / T_max
+    morning  = np.exp(-((x - 0.33)**2) / 0.003)
+    evening  = np.exp(-((x - 0.70)**2) / 0.003)
+    base = 0.05
+    return base + morning + evening
+
 cars = []
-def spawn_cars_test(n=1):
-    for _ in range(n):
+def spawn_cars_test(timestep):
+    """
+    Spawnar bilar baserat på traffic intensity vid aktuell timestep
+    """
+    current_minute = timestep % T_DAY
+    prob = traffic_intensity(current_minute, T_DAY)
+    n_to_spawn = np.random.poisson(prob)  # slumpmässigt antal bilar
+    for _ in range(n_to_spawn):
         start = random.choice(SPAWN_POINTS_TEST)
         goal = random.choice(DEST_POINTS_TEST)
         if goal == start:
@@ -228,14 +242,13 @@ def update_with_lanes():
     old_positions = {car: car.pos for car in cars}
 
     cars_to_remove = []
+
     # Slumpa nya vägarbeten
     for r in range(GRID_H):
         for c in range(GRID_W):
             if road_mask[r,c] == 1 and (r,c) not in roadworks:
                 if random.random() < ROADWORK_PROB:
                     roadworks[(r,c)] = ROADWORK_DURATION
-                    road_mask[r,c] = 0  # blockera vägen
-
     # Minska timer för befintliga vägarbeten
     to_remove = []
     for pos in roadworks:
@@ -244,7 +257,6 @@ def update_with_lanes():
             to_remove.append(pos)
     for pos in to_remove:
         roadworks.pop(pos)
-        road_mask[pos] = 1  # öppna upp vägen igen
 
     # Recalc if stuck 2 steg
     for car in cars:
@@ -281,13 +293,13 @@ def update_with_lanes():
                 continue
             if not (0 <= r_new < GRID_H and 0 <= c_new < GRID_W): 
                 continue
-            if road_mask[r_new,c_new] != 1:
+            # Blockera vägarbeten
+            if road_mask[r_new,c_new] != 1 or (r_new,c_new) in roadworks:
                 continue
             # Traffic light check
             if car.pos in traffic_light_map:
                 tl = traffic_light_map[car.pos]
                 if not tl.allows(car.pos, desired):
-                    # Rött ljus → bilen får inte köra in i r_new,c_new
                     continue
             occ = lanes[r_new,c_new][lane] if lane else lanes[r_new,c_new]['still']
             if len(occ) == 0:
@@ -350,12 +362,25 @@ for r,c in DEST_POINTS_TEST:
     gd, = ax.plot(c,r,'o',color='blue',markersize=8)
     goal_dots.append(gd)
 
+
+roadwork_dots = []
 def animate(step):
-    spawn_cars_test(random.randint(0,2))
+    global timestep  # MÅSTE stå först!
+
+    spawn_cars_test(timestep)
     update_with_lanes()
+
+    # Ta bort gamla roadwork-dots
+    for d in roadwork_dots:
+        d.remove()
+    roadwork_dots.clear()
+
+    # Rita aktiva vägarbeten
     for (r,c), timer in roadworks.items():
-        ax.plot(c, r, 'rs', markersize=6)  # röd fyrkant
-    # Draw traffic light
+        dot, = ax.plot(c, r, 'rs', markersize=6)
+        roadwork_dots.append(dot)
+    
+    # Rita trafikljus
     for tl in traffic_lights:
         r,c = tl.position
         if tl.state == "NS_GREEN":
@@ -363,6 +388,7 @@ def animate(step):
         else:
             ax.plot(c, r, 'ro', markersize=8)
 
+    # Sync bil-markörer
     while len(dots) > len(cars):
         d = dots.pop()
         d.remove()
@@ -373,13 +399,22 @@ def animate(step):
     for d,car in zip(dots,cars):
         d.set_data([car.pos[1]],[car.pos[0]])
         d.set_color(dir_color(car.last_dir))
-    # Tick all traffic lights
+
+    # Tick trafikljus
     for tl in traffic_lights:
         tl.tick()
-    ax.set_title(f"Step {step} | Cars: {len(cars)}")
+
+    # Tid i HH:MM
+    minutes = timestep % T_DAY
+    hours = minutes // 60
+    mins = minutes % 60
+    ax.set_title(f"Time {hours:02d}:{mins:02d} | Cars: {len(cars)}")
+
+    timestep += 1
     return dots + goal_dots
 
-anim = FuncAnimation(fig, animate, frames=SIM_STEPS, interval=80, blit=False)
+
+anim = FuncAnimation(fig, animate, frames=SIM_STEPS, interval=200, blit=False)
 plt.show()
 
 # Plot congestion
