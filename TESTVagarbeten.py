@@ -3,6 +3,9 @@ import random
 import matplotlib.pyplot as plt
 from heapq import heappush, heappop
 from matplotlib.animation import FuncAnimation
+
+import datetime as dt
+import matplotlib.dates as mdates
 #import matplotlib      #Om det slutar fungera, avkommentera denna rad
 #matplotlib.use('TkAgg') #Använd denna rad om det slutar fungera
 # ----------------------------------
@@ -12,9 +15,9 @@ GRID_W = 40
 GRID_H = 40
 SIM_STEPS = 400
 roadworks = {}  # key=(r,c), value=timer kvar
-ROADWORK_PROB = 0.0001
+ROADWORK_PROB = 0.00005
 ROADWORK_DURATION = 50  # antal steg vägarbetet finns kvar
-
+roadwork_events = []  # timesteps när ett nytt vägarbete startar
 congestion_history = []
 
 # ----------------------------------
@@ -44,6 +47,13 @@ for j in range(25,39):
     road_mask[24,j] = 0
 for j in range(9,16):
     road_mask[24,j] = 0
+for i in range(9,32):
+    road_mask[i,0] = 0
+for j in range(0,8):
+    road_mask[16,j] = 0
+    road_mask[24,j] = 0
+for i in range(33,39):
+    road_mask[i,8] = 0
 
 # Lanes
 lanes = np.empty((GRID_H, GRID_W), dtype=object)
@@ -55,7 +65,7 @@ for r in range(GRID_H):
 # Edge + fixed goals
 # ----------------------------------
 SPAWN_POINTS_TEST = [(0, c) for c in range(GRID_W) if road_mask[0, c] == 1]
-DEST_POINTS_TEST = [(GRID_H-1, 0), (0, GRID_W-1), (32,16)]
+DEST_POINTS_TEST = [(GRID_W-1, 0), (GRID_W-1, 16), (GRID_H-1, GRID_W-1)]
 
 # ----------------------------------
 # Dijkstra
@@ -178,6 +188,11 @@ class TrafficLight:
 traffic_lights = [
     TrafficLight((16,16), ns_green=30, ew_green=30),
     TrafficLight((16,8), ns_green=50, ew_green=20),
+    #TrafficLight((32,8), ns_green=40, ew_green=10),
+    TrafficLight((32,16), ns_green=45, ew_green=15),
+    TrafficLight((16,39), ns_green=45, ew_green=15),
+    TrafficLight((24,24), ns_green=30, ew_green=15),
+    TrafficLight((24,16), ns_green=30, ew_green=15),
 ]
 traffic_light_map = {tl.position: tl for tl in traffic_lights}
 
@@ -249,6 +264,7 @@ def update_with_lanes():
             if road_mask[r,c] == 1 and (r,c) not in roadworks:
                 if random.random() < ROADWORK_PROB:
                     roadworks[(r,c)] = ROADWORK_DURATION
+                    roadwork_events.append(timestep)
     # Minska timer för befintliga vägarbeten
     to_remove = []
     for pos in roadworks:
@@ -339,10 +355,10 @@ def update_with_lanes():
 # Colors for directions
 # ----------------------------------
 def dir_color(d):
-    if d == 'N': return 'blue'
-    if d == 'S': return 'green'
+    if d == 'N': return 'lightblue'
+    if d == 'S': return 'lightgreen'
     if d == 'E': return 'orange'
-    if d == 'W': return 'purple'
+    if d == 'W': return 'magenta'
     return 'red'
 
 # ----------------------------------
@@ -414,13 +430,51 @@ def animate(step):
     return dots + goal_dots
 
 
-anim = FuncAnimation(fig, animate, frames=SIM_STEPS, interval=200, blit=False)
+anim = FuncAnimation(fig, animate, frames=SIM_STEPS, interval=20, blit=False)
 plt.show()
 
 # Plot congestion
-plt.figure()
-plt.plot(congestion_history)
-plt.title("Congestion Index Over Time")
-plt.xlabel("Timestep")
-plt.ylabel("Still Cars")
+# ----------------------------------
+# Plot congestion + roadwork events
+# ----------------------------------
+
+start_time = dt.datetime(2024, 1, 1, 0, 0)  # godtyckligt datum
+times = [start_time + dt.timedelta(minutes=i) for i in range(len(congestion_history))]
+
+fig2, ax2 = plt.subplots(figsize=(12,6))
+
+# Plot congestion
+ax2.plot(times, congestion_history, linewidth=2)
+
+# Vertikala linjer för vägarbeten
+#for t in roadwork_events:
+#    if t < len(times):
+#        ax2.axvline(
+#            times[t],
+#            color='red',
+#            alpha=0.3,
+#            linewidth=2
+#        )
+
+# Titel och etiketter (STOR TEXT)
+ax2.set_title("Congestion Index Over Time", fontsize=22)
+ax2.set_ylabel("Still Cars", fontsize=18)
+ax2.set_xlabel("Time of day", fontsize=18)
+
+# Visa endast 08:00 och 17:00
+ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+
+important_hours = [8, 17]
+tick_times = [
+    start_time + dt.timedelta(hours=h)
+    for h in important_hours
+]
+ax2.set_xticks(tick_times)
+
+# Stora tick-labels
+ax2.tick_params(axis='both', labelsize=16)
+
+# Snyggare layout
+fig2.autofmt_xdate()
+plt.tight_layout()
 plt.show()
