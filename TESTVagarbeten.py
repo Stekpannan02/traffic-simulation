@@ -430,7 +430,7 @@ def animate(step):
     return dots + goal_dots
 
 
-anim = FuncAnimation(fig, animate, frames=SIM_STEPS, interval=20, blit=False)
+anim = FuncAnimation(fig, animate, frames=SIM_STEPS, interval=10, blit=False)
 plt.show()
 
 # Plot congestion
